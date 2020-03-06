@@ -956,6 +956,9 @@ class theory_lra::imp {
         }
         else {
             init_left_side(st);
+            if (m_left_side.empty() && st.offset().is_zero()) {
+                return get_zero(a.is_int(term));
+            }
             theory_var v = mk_var(term);
             lpvar vi = get_lpvar(v);
             TRACE("arith", tout << mk_pp(term, m) << " v" << v << " vi " << vi << "\n";);
@@ -3064,6 +3067,28 @@ public:
 
     bool set_lower_bound(lpvar vi, lp::constraint_index ci, rational const& v) { return set_bound(vi, ci, v, true);   }
 
+    vector<constraint_bound> m_history;
+    template<typename Ctx, typename T, bool CallDestructors=true>
+    class history_trail : public trail<Ctx> {
+        vector<T, CallDestructors> & m_dst;
+        unsigned                     m_idx;
+        vector<T, CallDestructors> & m_hist;
+    public:
+        history_trail(vector<T, CallDestructors> & v, unsigned idx, vector<T, CallDestructors> & hist):
+            m_dst(v),
+            m_idx(idx),
+            m_hist(hist) {}
+
+        ~history_trail() override {
+        }
+
+        void undo(Ctx & ctx) override {
+            m_dst[m_idx] = m_hist.back();
+            m_hist.pop_back();
+        }
+    };
+
+
     bool set_bound(lpvar vi, lp::constraint_index ci, rational const& v, bool is_lower) {
 
         if (lp().is_term(vi)) {
@@ -3075,7 +3100,8 @@ public:
             constraint_bound& b = vec[ti];
             if (b.first == UINT_MAX || (is_lower? b.second < v : b.second > v)) {
                 TRACE("arith", tout << "tighter bound " << vi << "\n";);
-                ctx().push_trail(vector_value_trail<context, constraint_bound>(vec, ti));
+                m_history.push_back(vec[ti]);
+                ctx().push_trail(history_trail<context, constraint_bound>(vec, ti, m_history));
                 b.first = ci;
                 b.second = v;
             }

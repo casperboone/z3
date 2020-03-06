@@ -587,8 +587,9 @@ namespace nlsat {
             var max = null_var;
             for (unsigned i = 0; i < sz; i++) {
                 p = m_pm.flip_sign_if_lm_neg(ps[i]);
-                if (p.get() != ps[i])
+                if (p.get() != ps[i] && !is_even[i]) {
                     sign = -sign;
+                }
                 var curr_max = max_var(p.get());
                 if (curr_max > max || max == null_var)
                     max = curr_max;
@@ -635,17 +636,36 @@ namespace nlsat {
             SASSERT(k == atom::LT || k == atom::GT || k == atom::EQ);
             if (sz == 0) {
                 switch (k) {
-                case atom::LT: return false_literal;  // 1 < 0
-                case atom::EQ: return false_literal;  // 1 == 0
-                case atom::GT: return true_literal;   // 1 > 0
+                case atom::LT: return false_literal;  // 0 < 0
+                case atom::EQ: return true_literal;   // 0 == 0
+                case atom::GT: return false_literal;  // 0 > 0
                 default: 
                     UNREACHABLE();
                     return null_literal;
                 }
             }
-            else {
-                return literal(mk_ineq_atom(k, sz, ps, is_even), false);
+            bool is_const = true;
+            polynomial::manager::scoped_numeral cnst(m_pm.m());
+            m_pm.m().set(cnst, 1);
+            for (unsigned i = 0; is_const && i < sz; ++i) {
+                if (m_pm.is_const(ps[i])) {
+                    auto const& c = m_pm.coeff(ps[i], 0);
+                    m_pm.m().mul(cnst, c, cnst);
+                    if (is_even[i]) {
+                        m_pm.m().mul(cnst, c, cnst);
+                    }                            
+                }
+                else {
+                    is_const = false;
+                }
             }
+            if (is_const) {
+                if (m_pm.m().is_pos(cnst) && k == atom::GT) return true_literal;
+                if (m_pm.m().is_neg(cnst) && k == atom::LT) return true_literal;
+                if (m_pm.m().is_zero(cnst) && k == atom::EQ) return true_literal;
+                return false_literal;
+            }
+            return literal(mk_ineq_atom(k, sz, ps, is_even), false);            
         }
 
         bool_var mk_root_atom(atom::kind k, var x, unsigned i, poly * p) {
@@ -1563,9 +1583,11 @@ namespace nlsat {
             m_explain.set_full_dimensional(is_full_dimensional());
             bool reordered = false;
 
-            if (!m_incremental && m_inline_vars) 
-                simplify();
-
+            if (!m_incremental && m_inline_vars) {
+                if (!simplify()) 
+                    return l_false;
+            }
+            
             if (!can_reorder()) {
 
             }
@@ -2603,7 +2625,7 @@ namespace nlsat {
            The method ignores lemmas and assumes constraints don't use roots.
         */
 
-        void simplify() {
+        bool simplify() {
             polynomial_ref p(m_pm), q(m_pm);
             var v;
             init_var_signs();
@@ -2618,12 +2640,14 @@ namespace nlsat {
                         m_patch_num.push_back(q);
                         m_patch_denom.push_back(p);
                         del_clause(c, m_clauses);
-                        substitute_var(v, p, q);
+                        if (!substitute_var(v, p, q))
+                            return false;
                         change = true;
                         break;
                     }
                 }
             }
+            return true;
         }
 
         void fix_patch() {
@@ -2644,7 +2668,8 @@ namespace nlsat {
             }
         }
 
-        void substitute_var(var x, poly* p, poly* q) {
+        bool substitute_var(var x, poly* p, poly* q) {
+            bool is_sat = true;
             polynomial_ref pr(m_pm);
             polynomial_ref_vector ps(m_pm);
             u_map<literal> b2l;
@@ -2670,7 +2695,7 @@ namespace nlsat {
                             change = true;
                             break;
                         }
-                    }               
+                    }        
                     if (!change) continue;
                     literal l = mk_ineq_literal(a1.get_kind(), ps.size(), ps.c_ptr(), even.c_ptr());                            
                     if (a1.m_bool_var != l.var()) {                        
@@ -2679,14 +2704,16 @@ namespace nlsat {
                     }
                 }
             }
-            update_clauses(b2l);
+            is_sat = update_clauses(b2l);
             for (auto const& kv : b2l) {
                 dec_ref(kv.m_value);
             }
+            return is_sat;
         }
 
 
-        void update_clauses(u_map<literal> const& b2l) {
+        bool update_clauses(u_map<literal> const& b2l) {
+            bool is_sat = true;
             literal_vector lits;
             clause_vector to_delete;
             unsigned n = m_clauses.size();
@@ -2713,7 +2740,13 @@ namespace nlsat {
                 }
                 if (changed) {
                     to_delete.push_back(c);
-                    if (!is_tautology) {
+                    if (is_tautology) {
+                        continue;
+                    }
+                    if (lits.empty()) {
+                        is_sat = false;
+                    }
+                    else {
                         mk_clause(lits.size(), lits.c_ptr(), c->is_learned(), static_cast<_assumption_set>(c->assumptions()));
                     }
                 }                        
@@ -2721,6 +2754,7 @@ namespace nlsat {
             for (clause* c : to_delete) {
                 del_clause(c, m_clauses);
             }
+            return is_sat;
         }
 
         bool is_unit_ineq(clause const& c) const {
