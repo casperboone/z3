@@ -59,12 +59,14 @@ namespace nlsat {
         unsynch_mpq_manager    m_qm;
         pmanager               m_pm;
         anum_manager           m_am;
-        ctx(reslimit& rlim, params_ref const & p):
+        bool                   m_incremental;
+        ctx(reslimit& rlim, params_ref const & p, bool incremental):
             m_params(p),
             m_rlimit(rlim),
             m_allocator("nlsat"),
             m_pm(rlim, m_qm, &m_allocator),
-            m_am(rlim, m_qm, p, &m_allocator)
+            m_am(rlim, m_qm, p, &m_allocator),
+            m_incremental(incremental)
         {}
     };
 
@@ -215,12 +217,12 @@ namespace nlsat {
         unsigned               m_stages;
         unsigned               m_irrational_assignments; // number of irrational witnesses
 
-        imp(solver& s, ctx& c, bool incremental):
+        imp(solver& s, ctx& c):
             m_ctx(c),
             m_solver(s),
             m_rlimit(c.m_rlimit),
             m_allocator(c.m_allocator),
-            m_incremental(incremental),
+            m_incremental(c.m_incremental),
             m_qm(c.m_qm),
             m_pm(c.m_pm),
             m_cache(m_pm),
@@ -2338,7 +2340,7 @@ namespace nlsat {
             for (clause* c : m_clauses) {
                 if (has_root_atom(*c)) return false;
             }
-            return true;
+            return m_patch_var.empty();
         }
 
         /**
@@ -2660,7 +2662,7 @@ namespace nlsat {
                 m_pm.eval(q, m_assignment, qv);
                 val = qv / pv;
                 TRACE("nlsat", 
-                      m_display_var(tout << "patch ", v) << "\n";
+                      m_display_var(tout << "patch v" << v << " ", v) << "\n";
                       if (m_assignment.is_assigned(v)) m_am.display(tout << "previous value: ", m_assignment.value(v)); tout << "\n";
                       m_am.display(tout << "updated value: ", val); tout << "\n";
                       );
@@ -2677,6 +2679,7 @@ namespace nlsat {
             unsigned num_atoms = m_atoms.size();
             for (unsigned j = 0; j < num_atoms; ++j) {
                 atom* a = m_atoms[j];
+
                 if (a && a->is_ineq_atom()) {
                     ineq_atom const& a1 = *to_ineq_atom(a);
                     unsigned sz = a1.size();
@@ -2697,7 +2700,7 @@ namespace nlsat {
                         }
                     }        
                     if (!change) continue;
-                    literal l = mk_ineq_literal(a1.get_kind(), ps.size(), ps.c_ptr(), even.c_ptr());                            
+                    literal l = mk_ineq_literal(a1.get_kind(), ps.size(), ps.c_ptr(), even.c_ptr()); 
                     if (a1.m_bool_var != l.var()) {                        
                         b2l.insert(a1.m_bool_var, l);
                         inc_ref(l);
@@ -3433,13 +3436,13 @@ namespace nlsat {
     };
     
     solver::solver(reslimit& rlim, params_ref const & p, bool incremental) {
-        m_ctx = alloc(ctx, rlim, p);
-        m_imp = alloc(imp, *this, *m_ctx, incremental);
+        m_ctx = alloc(ctx, rlim, p, incremental);
+        m_imp = alloc(imp, *this, *m_ctx);
     }
 
     solver::solver(ctx& ctx) {
         m_ctx = nullptr;
-        m_imp = alloc(imp, *this, ctx, false);
+        m_imp = alloc(imp, *this, ctx);
     }
         
     solver::~solver() {
