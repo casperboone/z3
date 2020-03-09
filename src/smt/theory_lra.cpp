@@ -1887,6 +1887,8 @@ public:
             VERIFY(a.is_idiv(n, p, q));
             theory_var v  = mk_var(n);
             theory_var v1 = mk_var(p);
+			if (!can_get_ivalue(v1))
+				continue;
             lp::impq r1 = get_ivalue(v1);
             rational r2;
 
@@ -1905,6 +1907,8 @@ public:
                     TRACE("arith", tout << "unbounded " << expr_ref(n, m) << "\n";);
                     continue;
                 }
+				if (!can_get_ivalue(v))
+					continue;
                 lp::impq val_v = get_ivalue(v);
                 if (val_v.y.is_zero() && val_v.x == div(r1.x, r2)) continue;
             
